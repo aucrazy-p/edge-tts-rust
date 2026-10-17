@@ -1,0 +1,529 @@
+[
+  {
+    "id": "zh-CN-XiaoxiaoNeural",
+    "name": "晓晓",
+    "gender": "female",
+    "profile": "少女感-温柔旁白",
+    "styles": [
+      "affectionate",
+      "angry",
+      "assistant",
+      "calm",
+      "chat",
+      "chat-casual",
+      "cheerful",
+      "customerservice",
+      "disgruntled",
+      "excited",
+      "fearful",
+      "friendly",
+      "gentle",
+      "lyrical",
+      "newscast",
+      "poetry-reading",
+      "sad",
+      "serious",
+      "sorry",
+      "whispering"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoyiNeural",
+    "name": "晓亦",
+    "gender": "female",
+    "profile": "少女-活泼甜亮",
+    "styles": [
+      "affectionate",
+      "angry",
+      "cheerful",
+      "disgruntled",
+      "embarrassed",
+      "fearful",
+      "gentle",
+      "sad",
+      "serious"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaochenNeural",
+    "name": "晓辰",
+    "gender": "female",
+    "profile": "女青年-自然柔和",
+    "styles": [
+      "livecommercial"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaohanNeural",
+    "name": "晓涵",
+    "gender": "female",
+    "profile": "少女-高亮温柔",
+    "styles": [
+      "affectionate",
+      "angry",
+      "calm",
+      "cheerful",
+      "disgruntled",
+      "embarrassed",
+      "fearful",
+      "gentle",
+      "sad",
+      "serious"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaomengNeural",
+    "name": "晓梦",
+    "gender": "female",
+    "profile": "少女-轻柔聊天",
+    "styles": [
+      "chat"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaomoNeural",
+    "name": "晓墨",
+    "gender": "female",
+    "profile": "少女-多角色温柔",
+    "styles": [
+      "affectionate",
+      "angry",
+      "calm",
+      "cheerful",
+      "depressed",
+      "disgruntled",
+      "embarrassed",
+      "envious",
+      "fearful",
+      "gentle",
+      "sad",
+      "serious"
+    ],
+    "roles": [
+      "Boy",
+      "Girl",
+      "OlderAdultFemale",
+      "OlderAdultMale",
+      "SeniorFemale",
+      "SeniorMale",
+      "YoungAdultFemale",
+      "YoungAdultMale"
+    ]
+  },
+  {
+    "id": "zh-CN-XiaoqiuNeural",
+    "name": "晓秋",
+    "gender": "female",
+    "profile": "成熟女声-高亮硬朗",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaorouNeural",
+    "name": "晓柔",
+    "gender": "female",
+    "profile": "少女-清甜",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoruiNeural",
+    "name": "晓睿",
+    "gender": "female",
+    "profile": "少女-冷亮情绪",
+    "styles": [
+      "angry",
+      "calm",
+      "fearful",
+      "sad"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoshuangNeural",
+    "name": "晓双",
+    "gender": "female",
+    "profile": "女童/少女-稚嫩清亮",
+    "styles": [
+      "chat"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoyanNeural",
+    "name": "晓颜",
+    "gender": "female",
+    "profile": "女青年-自然柔和",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoyouNeural",
+    "name": "晓悠",
+    "gender": "female",
+    "profile": "少女-高亮稚嫩",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaozhenNeural",
+    "name": "晓甄",
+    "gender": "female",
+    "profile": "女青年-清亮情绪",
+    "styles": [
+      "angry",
+      "cheerful",
+      "disgruntled",
+      "fearful",
+      "sad",
+      "serious"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunxiNeural",
+    "name": "云希",
+    "gender": "male",
+    "profile": "青年男声-阳光叙事",
+    "styles": [
+      "angry",
+      "assistant",
+      "chat",
+      "cheerful",
+      "depressed",
+      "disgruntled",
+      "embarrassed",
+      "fearful",
+      "narration-relaxed",
+      "newscast",
+      "sad",
+      "serious"
+    ],
+    "roles": [
+      "Boy",
+      "Narrator",
+      "YoungAdultMale"
+    ]
+  },
+  {
+    "id": "zh-CN-YunjianNeural",
+    "name": "云间",
+    "gender": "male",
+    "profile": "低沉男声-热血解说",
+    "styles": [
+      "angry",
+      "cheerful",
+      "depressed",
+      "disgruntled",
+      "documentary-narration",
+      "narration-relaxed",
+      "sad",
+      "serious",
+      "sports-commentary",
+      "sports-commentary-excited"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunyangNeural",
+    "name": "云扬",
+    "gender": "male",
+    "profile": "青年男声-专业播报",
+    "styles": [
+      "customerservice",
+      "narration-professional",
+      "newscast-casual"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunfengNeural",
+    "name": "云枫",
+    "gender": "male",
+    "profile": "青年男声-清朗情绪",
+    "styles": [
+      "angry",
+      "cheerful",
+      "depressed",
+      "disgruntled",
+      "fearful",
+      "sad",
+      "serious"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunhaoNeural",
+    "name": "云皓",
+    "gender": "male",
+    "profile": "低沉男声-活力广告",
+    "styles": [
+      "advertisement-upbeat"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunjieNeural",
+    "name": "云杰",
+    "gender": "male",
+    "profile": "少年男声-温和",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunxiaNeural",
+    "name": "云夏",
+    "gender": "male",
+    "profile": "男童/少年-高亮稚嫩",
+    "styles": [
+      "angry",
+      "calm",
+      "cheerful",
+      "fearful",
+      "sad"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunyeNeural",
+    "name": "云野",
+    "gender": "male",
+    "profile": "低沉大叔-多角色",
+    "styles": [
+      "angry",
+      "calm",
+      "cheerful",
+      "disgruntled",
+      "embarrassed",
+      "fearful",
+      "sad",
+      "serious"
+    ],
+    "roles": [
+      "Boy",
+      "Girl",
+      "OlderAdultFemale",
+      "OlderAdultMale",
+      "SeniorFemale",
+      "SeniorMale",
+      "YoungAdultFemale",
+      "YoungAdultMale"
+    ]
+  },
+  {
+    "id": "zh-CN-YunzeNeural",
+    "name": "云泽",
+    "gender": "male",
+    "profile": "低沉长辈-纪录片",
+    "styles": [
+      "angry",
+      "calm",
+      "cheerful",
+      "depressed",
+      "disgruntled",
+      "documentary-narration",
+      "fearful",
+      "sad",
+      "serious"
+    ],
+    "roles": [
+      "OlderAdultMale",
+      "SeniorMale"
+    ]
+  },
+  {
+    "id": "zh-CN-XiaoxiaoDialectsNeural",
+    "name": "晓晓DIA",
+    "gender": "female",
+    "profile": "女青年-方言清亮",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoxiaoMultilingualNeural",
+    "name": "晓晓MT",
+    "gender": "female",
+    "profile": "女青年-温柔多语",
+    "styles": [
+      "affectionate",
+      "cheerful",
+      "empathetic",
+      "excited",
+      "poetry-reading",
+      "sorry",
+      "story"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-XiaoyuMultilingualNeural",
+    "name": "晓宇MT",
+    "gender": "female",
+    "profile": "少女-柔亮多语",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunxiaoMultilingualNeural",
+    "name": "云晓MT",
+    "gender": "male",
+    "profile": "青年男声-温和多语",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunyiMultilingualNeural",
+    "name": "云逸MT",
+    "gender": "male",
+    "profile": "青年男声-清朗多语",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-YunfanMultilingualNeural",
+    "name": "云帆MT",
+    "gender": "male",
+    "profile": "青年男声-明亮多语",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Xiaochen:DragonHDLatestNeural",
+    "name": "晓辰HD",
+    "gender": "female",
+    "profile": "高清女声-自然柔和",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Yunfan:DragonHDLatestNeural",
+    "name": "云帆HD",
+    "gender": "male",
+    "profile": "高清男声-清朗",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Xiaochen:DragonHDFlashLatestNeural",
+    "name": "晓辰FHD",
+    "gender": "female",
+    "profile": "高清少女-明亮情绪",
+    "styles": [
+      "cheerful",
+      "debating",
+      "empathetic",
+      "live-commercial",
+      "poetry-reading",
+      "sad",
+      "sorry"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Xiaoxiao:DragonHDFlashLatestNeural",
+    "name": "晓晓FHD",
+    "gender": "female",
+    "profile": "高清少女-助手情绪",
+    "styles": [
+      "angry",
+      "chat",
+      "cheerful",
+      "customer-service",
+      "excited",
+      "fearful",
+      "sad",
+      "voice-assistant"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural",
+    "name": "潇潇FHD",
+    "gender": "female",
+    "profile": "高清女青年-细腻情绪",
+    "styles": [
+      "affectionate",
+      "angry",
+      "anxious",
+      "cheerful",
+      "curious",
+      "disappointed",
+      "empathetic",
+      "encouraging",
+      "excited",
+      "fearful",
+      "guilty",
+      "lonely",
+      "poetry-reading",
+      "sad",
+      "sentimental",
+      "sorry",
+      "story",
+      "surprised",
+      "tired",
+      "whispering"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Yunxiao:DragonHDFlashLatestNeural",
+    "name": "云萧FHD",
+    "gender": "male",
+    "profile": "高清男声-清朗",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Yunye:DragonHDFlashLatestNeural",
+    "name": "云野FHD",
+    "gender": "male",
+    "profile": "高清大叔-低沉",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-CN-Yunyi:DragonHDFlashLatestNeural",
+    "name": "云逸FHD",
+    "gender": "male",
+    "profile": "高清男声-角色演绎",
+    "styles": [
+      "assassin",
+      "captain",
+      "cavalier",
+      "game-narrator",
+      "geomancer",
+      "poet",
+      "prince"
+    ],
+    "roles": []
+  },
+  {
+    "id": "zh-TW-HsiaoChenNeural",
+    "name": "晓宸_繁",
+    "gender": "female",
+    "profile": "台配女青年-自然亲和",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-TW-HsiaoYuNeural",
+    "name": "晓语_繁",
+    "gender": "female",
+    "profile": "台配成熟女声-明亮",
+    "styles": [],
+    "roles": []
+  },
+  {
+    "id": "zh-TW-YunJheNeural",
+    "name": "云喆_繁",
+    "gender": "male",
+    "profile": "台配男声-温和低沉",
+    "styles": [],
+    "roles": []
+  }
+]

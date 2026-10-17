@@ -1,0 +1,18 @@
+[package]
+name = "tts-server-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight self-hosted Edge TTS server (Rust) for legado_NG, with 39-voice catalog, streaming, retry and cache"
+license = "MIT"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+edge-tts-rust = "0.1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-stream = "0.3"
+futures = "0.3"
+lru = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
