@@ -178,7 +178,7 @@ async fn acquire(
         })
         .await;
         match got {
-            Ok(Ok(b)) => return Ok((b, s)),
+            Ok(Ok(b)) => return Ok((b.to_vec(), s)),
             Ok(Err(e)) => last_err = e,
             Err(_) => last_err = "first-byte timeout".to_string(),
         }
@@ -254,13 +254,13 @@ async fn tts_handler(
         return ([(header::CONTENT_TYPE, "audio/mpeg")], Body::from(audio.clone())).into_response();
     }
 
-    let opts = SpeakOptions {
-        voice: voice.clone(),
-        rate,
-        pitch,
-        volume,
-        boundary: Boundary::Sentence,
-    };
+    let mut opts = SpeakOptions::default();
+    opts.voice = voice.clone();
+    opts.rate = rate;
+    opts.pitch = pitch;
+    opts.volume = volume;
+    opts.boundary = Boundary::Sentence;
+    // 其余字段（如新版新增的 output_format）沿用 default 填充
 
     let (first, stream) = match acquire(&state, text.clone(), opts).await {
         Ok(v) => v,

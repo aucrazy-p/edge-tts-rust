@@ -8,7 +8,7 @@ license = "MIT"
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
-edge-tts-rust = "0.1.2"
+edge-tts-rust = "=0.1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-stream = "0.3"
