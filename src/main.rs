@@ -274,6 +274,8 @@ async fn tts_handler(
 
     let cache = state.cache.clone();
     let cache_key = key.clone();
+    // 流式转发：edge-tts 边合成边吐音频，我们拿到首包后立刻推给 legado_NG，
+    // 播放器可立即出声，感知延迟最低（优于 python 版先攒完整音频再返回）。
     let body = Body::from_stream(async_stream::stream! {
         let mut acc: Vec<u8> = Vec::new();
         acc.extend_from_slice(&first);
@@ -326,6 +328,7 @@ fn index_html(
         r#"<span class="bad">校验失败</span>"#.to_string()
     };
     let token_q = given.map(|t| format!("?token={t}")).unwrap_or_default();
+    let token_a = given.map(|t| format!("&token={t}")).unwrap_or_default();
     let html = format!(
         r#"<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -341,7 +344,7 @@ fn index_html(
  <li>{status_line}</li>
  <li>音色数量：<b>{voice_count}</b> 个（legado_NG 默认全量）</li>
  <li>Token：{token_line}</li>
- <li>试听测试：<a href="/tts?text=你好，自托管语音服务已就绪{token_q}">点我播放一段测试语音</a></li>
+ <li>试听测试：<a href="/tts?text=你好，自托管语音服务已就绪{token_a}">点我播放一段测试语音</a></li>
  <li>音色清单：<a href="/voices{token_q}">/voices</a></li>
 </ul>
 <p class="tip">本服务为 legado_NG「自托管 Edge TTS」引擎专用 API，没有网页界面属正常现象。<br>
