@@ -264,7 +264,11 @@ async fn tts_handler(
     opts.pitch = pitch;
     opts.volume = volume;
     opts.boundary = Boundary::Sentence;
-    // 其余字段（如新版新增的 output_format）沿用 default 填充
+    // 强制输出 MP3，与对外声明的 Content-Type: audio/mpeg 对齐。
+    // edge-tts-rust 0.1.7 默认 output_format = "webm-24khz-16bit-mono-opus"，
+    // 会让 Android/legado 播放器按 mp3 解码失败 (source error)；
+    // 浏览器能放只是因为它会嗅探真实格式把 bug 盖住。
+    opts.output_format = "audio-24khz-48kbitrate-mono-mp3".to_string();
 
     // 先抢首包（带重试），确认上游可用后再整段收取。
     // 关键点：legado 的 HTTP TTS 引擎需要“完整、带 Content-Length 的音频响应”，
