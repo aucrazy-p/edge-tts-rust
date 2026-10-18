@@ -10,14 +10,14 @@
 //! 接口契约（与 Python 版完全一致）：
 //!   GET /          -> 状态页（HTML）
 //!   GET /voices?token=...        -> {"voices":[...39...]}（legado_NG 拉音色列表）
-//!   GET /tts?text=&voice=&speed=&pitch=&volume=&style=&token= -> audio/mpeg（流式）
+//!   GET /tts?text=&voice=&speed=&pitch=&volume=&style=&token= -> audio/mpeg（整段缓冲，带 Content-Length）
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
-    body::{Body, Bytes},
+    body::Body,
     extract::{Query, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Response},
@@ -248,10 +248,14 @@ async fn tts_handler(
         text
     );
 
-    // 缓存命中：相同参数相同文本直接秒回
+    // 缓存命中：相同参数相同文本直接秒回（完整音频，带 Content-Length）
     if let Some(audio) = state.cache.lock().await.get(&key) {
         info!("cache hit ({} bytes)", audio.len());
-        return ([(header::CONTENT_TYPE, "audio/mpeg")], Body::from(audio.clone())).into_response();
+        return ([
+            (header::CONTENT_TYPE, "audio/mpeg".to_string()),
+            (header::CONTENT_LENGTH, audio.len().to_string()),
+        ], Body::from(audio.clone()))
+            .into_response();
     }
 
     let mut opts = SpeakOptions::default();
@@ -262,6 +266,10 @@ async fn tts_handler(
     opts.boundary = Boundary::Sentence;
     // 其余字段（如新版新增的 output_format）沿用 default 填充
 
+    // 先抢首包（带重试），确认上游可用后再整段收取。
+    // 关键点：legado 的 HTTP TTS 引擎需要“完整、带 Content-Length 的音频响应”，
+    // 不支持分块流式（chunked）播放；因此改为整段缓冲后一次性返回，
+    // 与参考 python 版及 enximi/edge-tts-for-legado 的已验证做法一致。
     let (first, stream) = match acquire(&state, text.clone(), opts).await {
         Ok(v) => v,
         Err(e) => {
@@ -272,39 +280,30 @@ async fn tts_handler(
         }
     };
 
-    let cache = state.cache.clone();
-    let cache_key = key.clone();
-    // 流式转发：edge-tts 边合成边吐音频，我们拿到首包后立刻推给 legado_NG，
-    // 播放器可立即出声，感知延迟最低（优于 python 版先攒完整音频再返回）。
-    let body = Body::from_stream(async_stream::stream! {
-        let mut acc: Vec<u8> = Vec::new();
-        acc.extend_from_slice(&first);
-        yield Ok::<_, std::convert::Infallible>(Bytes::from(first));
-        let mut s = stream;
-        let mut ok = true;
-        while let Some(ev) = s.next().await {
-            match ev {
-                Ok(SynthesisEvent::Audio(b)) => {
-                    acc.extend_from_slice(&b);
-                    yield Ok(Bytes::from(b));
-                }
-                Ok(_) => {} // 边界事件，忽略
-                Err(_) => {
-                    ok = false; // 中途出错：不缓存残缺音频
-                    break;
-                }
+    let mut audio: Vec<u8> = first;
+    let mut s = stream;
+    while let Some(ev) = s.next().await {
+        match ev {
+            Ok(SynthesisEvent::Audio(b)) => audio.extend_from_slice(&b),
+            Ok(_) => {} // 边界事件，忽略
+            Err(e) => {
+                return Response::builder()
+                    .status(502)
+                    .body(Body::from(format!("tts upstream error (mid-stream): {e}")))
+                    .unwrap();
             }
         }
-        if ok {
-            cache.lock().await.put(cache_key, acc);
-        }
-    });
+    }
 
-    Response::builder()
-        .status(200)
-        .header(header::CONTENT_TYPE, "audio/mpeg")
-        .body(body)
-        .unwrap()
+    // 整段合成成功，写入缓存
+    state.cache.lock().await.put(key, audio.clone());
+    info!("synthesized {} bytes", audio.len());
+
+    ([
+        (header::CONTENT_TYPE, "audio/mpeg".to_string()),
+        (header::CONTENT_LENGTH, audio.len().to_string()),
+    ], Body::from(audio))
+        .into_response()
 }
 
 // ----------------------------- 状态页 -----------------------------

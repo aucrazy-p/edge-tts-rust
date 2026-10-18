@@ -2,7 +2,7 @@
 name = "tts-server-rust"
 version = "0.1.0"
 edition = "2021"
-description = "Lightweight self-hosted Edge TTS server (Rust) for legado_NG, with 39-voice catalog, streaming, retry and cache"
+description = "Lightweight self-hosted Edge TTS server (Rust) for legado_NG, with 39-voice catalog, full-audio response, retry and cache"
 license = "MIT"
 
 [dependencies]
