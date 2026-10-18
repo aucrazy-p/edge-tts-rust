@@ -2,14 +2,15 @@
 //!
 //! 目标：用 Rust（axum + edge-tts-rust）重写原本的 Python 版 TTS-SERVER，
 //! 1:1 对齐 legado_NG 内置「自托管 Edge TTS」引擎的 GET 契约，
-//! 因此阅读里现有的引擎配置（self-hosted-edge-tts.json）**一行都不用改**，
-//! 39 个音色下拉照旧。同时吸收两个方案的优点：
+//! 因此阅读里现有的引擎配置（self-hosted-edge-tts.json）**一行都不用改**。
+//! 音色下拉项由本服务**动态同步微软实时列表**提供（不写死、不接第三方中转），
+//! 微软当前免费给几个就用几个。同时吸收两个方案的优点：
 //!   - server.py 的【流式首字节低延迟】+【LRU 缓存】
 //!   - enximi 的【指数退避重试】+【可配置超时】+【极低内存占用】
 //!
 //! 接口契约（与 Python 版完全一致）：
 //!   GET /          -> 状态页（HTML）
-//!   GET /voices?token=...        -> {"voices":[...39...]}（legado_NG 拉音色列表）
+//!   GET /voices?token=...        -> {"voices":[...]}（动态同步微软实时列表，缓存 24h）
 //!   GET /tts?text=&voice=&speed=&pitch=&volume=&style=&token= -> audio/mpeg（整段缓冲，带 Content-Length）
 
 use std::num::NonZeroUsize;
@@ -28,9 +29,15 @@ use edge_tts_rust::{Boundary, EdgeTtsClient, EventStream, SpeakOptions, Synthesi
 use futures::StreamExt;
 use lru::LruCache;
 use serde::Deserialize;
+use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::filter::LevelFilter;
+
+/// /voices 动态列表缓存时长：微软音色很少变动，缓存 24h 即可。
+const VOICES_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// 当实时拉取失败、回退到内置静态列表时，5 分钟后重试实时拉取。
+const VOICES_FALLBACK_TTL: Duration = Duration::from_secs(5 * 60);
 
 // ----------------------------- 配置读取 -----------------------------
 
@@ -54,6 +61,8 @@ struct AppState {
     retry_backoff: Duration,
     voices_json: &'static str,
     voice_count: usize,
+    /// 动态音色列表缓存：(时间戳, JSON 字符串, 数量, 是否静态回退)
+    voices_cache: Arc<Mutex<Option<(Instant, String, usize, bool)>>>,
 }
 
 impl Clone for AppState {
@@ -69,6 +78,7 @@ impl Clone for AppState {
             retry_backoff: self.retry_backoff,
             voices_json: self.voices_json,
             voice_count: self.voice_count,
+            voices_cache: self.voices_cache.clone(),
         }
     }
 }
@@ -142,6 +152,20 @@ fn map_units(speed: i32, pitch: i32, volume: i32) -> (String, String, String) {
     )
 }
 
+/// 统一构造 SpeakOptions：覆盖 voice/rate/pitch/volume/boundary，
+/// 并强制 output_format = MP3，与对外声明的 Content-Type: audio/mpeg 对齐
+/// （edge-tts-rust 0.1.7 默认是 webm-opus，会让 Android/legado 解码失败）。
+fn build_opts(voice: String, rate: String, pitch: String, volume: String) -> SpeakOptions {
+    let mut o = SpeakOptions::default();
+    o.voice = voice;
+    o.rate = rate;
+    o.pitch = pitch;
+    o.volume = volume;
+    o.boundary = Boundary::Sentence;
+    o.output_format = "audio-24khz-48kbitrate-mono-mp3".to_string();
+    o
+}
+
 // ----------------------------- 合成（含重试：先抢到首包再流式） -----------------------------
 
 /// 在总超时预算内重试；每次尝试去拿“第一个音频块”，拿到后才开始往客户端推流，
@@ -201,7 +225,96 @@ async fn sleep_backoff(state: &AppState, attempt: u32, deadline: Instant) {
 
 async fn index_handler(Query(q): Query<TokenQuery>, State(state): State<AppState>) -> impl IntoResponse {
     let ok = check_token(&state.token, q.token.as_deref(), &HeaderMap::new());
-    index_html(state.voice_count, ok, q.token.as_deref(), &state.token)
+    let count = current_voice_count(&state).await;
+    index_html(count, ok, q.token.as_deref(), &state.token)
+}
+
+// ----------------------------- 动态音色列表（实时同步微软，不写死） -----------------------------
+
+fn derive_voice_name(short: &str) -> String {
+    // zh-CN-XiaoxiaoNeural -> Xiaoxiao；zh-CN-liaoning-XiaobeiNeural -> Xiaobei
+    let last = short.split('-').last().unwrap_or(short);
+    last.strip_suffix("Neural").unwrap_or(last).to_string()
+}
+
+fn derive_voice_profile(short: &str) -> String {
+    if short.contains("DragonHD") {
+        "DragonHD".to_string()
+    } else if short.contains("Multilingual") {
+        "Multilingual".to_string()
+    } else if short.matches('-').count() >= 3 {
+        "Dialect".to_string()
+    } else {
+        "Neural".to_string()
+    }
+}
+
+/// 实时向微软拉取中文音色列表，构造 legado_NG 需要的 voices 结构。
+/// 用与合成完全相同的 client/token，保证“列出来的”一定能合成。
+async fn build_voices_json(client: &EdgeTtsClient) -> Option<(String, usize)> {
+    let voices = client.list_voices().await.ok()?;
+    let mut out = Vec::new();
+    for v in voices {
+        if !v.locale.starts_with("zh") {
+            continue;
+        }
+        let mut obj = serde_json::Map::new();
+        obj.insert("id".into(), json!(v.short_name));
+        obj.insert("name".into(), json!(derive_voice_name(&v.short_name)));
+        obj.insert("gender".into(), json!(v.gender));
+        obj.insert("profile".into(), json!(derive_voice_profile(&v.short_name)));
+        out.push(json!(obj));
+    }
+    if out.is_empty() {
+        return None;
+    }
+    let n = out.len();
+    let payload = json!({ "voices": out });
+    Some((payload.to_string(), n))
+}
+
+/// 取音色列表：优先返回缓存的实时列表；缓存未命中/过期则实时拉取；
+/// 实时拉取失败时回退到内置静态文件（5 分钟后重试）。
+async fn get_voices(state: &AppState) -> String {
+    {
+        let g = state.voices_cache.lock().await;
+        if let Some((ts, s, _, fallback)) = g.as_ref() {
+            let ttl = if *fallback { VOICES_FALLBACK_TTL } else { VOICES_CACHE_TTL };
+            if ts.elapsed() < ttl {
+                return s.clone();
+            }
+        }
+    }
+    match build_voices_json(&state.client).await {
+        Some((s, n)) => {
+            let _ = state.voices_cache.lock().await.insert((Instant::now(), s.clone(), n, false));
+            s
+        }
+        None => {
+            let s = format!(r#"{{"voices":{}}}"#, state.voices_json);
+            // 回退静态：把时间戳设为“已过期”，使下次请求尽快重试实时拉取
+            let past = Instant::now()
+                .checked_sub(VOICES_FALLBACK_TTL)
+                .unwrap_or_else(Instant::now);
+            let _ = state
+                .voices_cache
+                .lock()
+                .await
+                .insert((past, s.clone(), state.voice_count, true));
+            info!("voices: 实时拉取失败，回退内置静态列表");
+            s
+        }
+    }
+}
+
+/// 当前展示用的音色数量（优先取实时列表缓存）。
+async fn current_voice_count(state: &AppState) -> usize {
+    let g = state.voices_cache.lock().await;
+    if let Some((_, _, n, _)) = g.as_ref() {
+        *n
+    } else {
+        state.voice_count
+    }
 }
 
 async fn voices_handler(
@@ -212,7 +325,7 @@ async fn voices_handler(
     if !check_token(&state.token, q.token.as_deref(), &headers) {
         return unauthorized();
     }
-    let body = format!(r#"{{"voices":{}}}"#, state.voices_json);
+    let body = get_voices(&state).await;
     ([(header::CONTENT_TYPE, "application/json; charset=utf-8")], body).into_response()
 }
 
@@ -258,29 +371,49 @@ async fn tts_handler(
             .into_response();
     }
 
-    let mut opts = SpeakOptions::default();
-    opts.voice = voice.clone();
-    opts.rate = rate;
-    opts.pitch = pitch;
-    opts.volume = volume;
-    opts.boundary = Boundary::Sentence;
     // 强制输出 MP3，与对外声明的 Content-Type: audio/mpeg 对齐。
     // edge-tts-rust 0.1.7 默认 output_format = "webm-24khz-16bit-mono-opus"，
     // 会让 Android/legado 播放器按 mp3 解码失败 (source error)；
     // 浏览器能放只是因为它会嗅探真实格式把 bug 盖住。
-    opts.output_format = "audio-24khz-48kbitrate-mono-mp3".to_string();
-
+    let mut used_fallback = false;
     // 先抢首包（带重试），确认上游可用后再整段收取。
     // 关键点：legado 的 HTTP TTS 引擎需要“完整、带 Content-Length 的音频响应”，
     // 不支持分块流式（chunked）播放；因此改为整段缓冲后一次性返回，
     // 与参考 python 版及 enximi/edge-tts-for-legado 的已验证做法一致。
-    let (first, stream) = match acquire(&state, text.clone(), opts).await {
+    let (first, stream) = match acquire(
+        &state,
+        text.clone(),
+        build_opts(voice.clone(), rate.clone(), pitch.clone(), volume.clone()),
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => {
-            return Response::builder()
-                .status(502)
-                .body(Body::from(format!("tts upstream error: {e}")))
-                .unwrap();
+            // 单音色合成失败（如该音色在当前免费通道不可用）时，
+            // 自动回退到默认音色重试一次，保证 legado_NG 永远拿到音频、不再 source error。
+            if voice != state.default_voice {
+                used_fallback = true;
+                match acquire(
+                    &state,
+                    text.clone(),
+                    build_opts(state.default_voice.clone(), rate, pitch, volume),
+                )
+                .await
+                {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Response::builder()
+                            .status(502)
+                            .body(Body::from(format!("tts upstream error: {e}")))
+                            .unwrap();
+                    }
+                }
+            } else {
+                return Response::builder()
+                    .status(502)
+                    .body(Body::from(format!("tts upstream error: {e}")))
+                    .unwrap();
+            }
         }
     };
 
@@ -299,9 +432,11 @@ async fn tts_handler(
         }
     }
 
-    // 整段合成成功，写入缓存
-    state.cache.lock().await.put(key, audio.clone());
-    info!("synthesized {} bytes", audio.len());
+    // 整段合成成功，写入缓存（回退到默认音色的结果不缓存，避免以错误 voice 键存下默认音色音频）
+    if !used_fallback {
+        state.cache.lock().await.put(key, audio.clone());
+    }
+    info!("synthesized {} bytes{}", audio.len(), if used_fallback { " (fallback to default voice)" } else { "" });
 
     ([
         (header::CONTENT_TYPE, "audio/mpeg".to_string()),
@@ -345,7 +480,7 @@ fn index_html(
 <h1>🔊 TTS-SERVER (Rust)</h1>
 <ul>
  <li>{status_line}</li>
- <li>音色数量：<b>{voice_count}</b> 个（legado_NG 默认全量）</li>
+ <li>音色列表：动态同步微软实时（当前 <b>{voice_count}</b> 个，免费通道可用即同步）</li>
  <li>Token：{token_line}</li>
  <li>试听测试：<a href="/tts?text=你好，自托管语音服务已就绪{token_a}">点我播放一段测试语音</a></li>
  <li>音色清单：<a href="/voices{token_q}">/voices</a></li>
@@ -393,6 +528,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         retry_backoff: Duration::from_millis(env_or("RETRY_BACKOFF_MS", 1_000u64)),
         voices_json,
         voice_count,
+        voices_cache: Arc::new(Mutex::new(None)),
     };
 
     let app = Router::new()
