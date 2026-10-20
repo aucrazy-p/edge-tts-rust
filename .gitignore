@@ -1,1 +1,4 @@
 /target
+
+# 本地审计/干跑临时目录
+.tmp-audit/

@@ -44,10 +44,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main
 请选择 [0-9]:
 ```
 
-- **首次安装**会依次询问：访问令牌（留空随机生成）、监听端口（默认 8080，部分小鸡仅开放 80/443 需填已开放端口）、反向代理域名（留空=不反代，直接用 `IP:端口+token`）。
+- **首次安装**会依次询问：访问令牌（留空随机生成，**不允许为空**）、监听端口（**留空=随机 30000-59999 高位端口**，避开 8080 这类被全网扫描的端口；若小鸡只放开 80/443 就填对应端口）、反向代理域名（留空=不反代，直接用 `IP:端口+token`）。
 - **更新（菜单 7）** 会沿用已有配置重新拉取最新二进制，不再重复询问。
 - 菜单 8「更改端口」可随时改监听端口并自动重启生效（若启用反代会同步 Caddy 端口）。
-- 菜单 9「对外访问配置」用 Caddy 反代 + 自动申请 HTTPS（个人使用也可不选，直接 IP:端口+token）。
+- 菜单 9「对外访问配置」用 Caddy 反代 + 自动申请 HTTPS（个人使用也可不选，直接 IP:端口+token）。Caddy 通过官方 apt 仓库安装。
 
 也可直接传子命令（无需菜单）：
 
@@ -67,12 +67,29 @@ bash install.sh menu           # 直接进入菜单
 非交互（一键）示例：
 
 ```bash
-PORT=8080 TTS_TOKEN=你的令牌 DOMAIN=tts.example.com bash install.sh
-# 不反代：
-PORT=8080 TTS_TOKEN=你的令牌 bash install.sh
+# 全自动：令牌随机生成，端口随机高位
+TTS_TOKEN=你的令牌 bash install.sh
+
+# 指定端口（此时不再随机）
+PORT=38641 TTS_TOKEN=你的令牌 bash install.sh
+
+# 需要 HTTPS 再加域名
+PORT=38641 TTS_TOKEN=你的令牌 DOMAIN=tts.example.com bash install.sh
 ```
 
 > 注：交互读取统一走 `/dev/tty`，因此 `curl | bash` 场景下菜单也能正常输入，不会像旧版那样直接跳过。
+
+## 安全与升级
+
+- 配置文件 `/etc/tts-server-rust.conf` 权限为 `600`，内含明文令牌。
+- **令牌不会被允许为空**：服务端在 `TTS_TOKEN` 为空时会完全跳过鉴权，因此脚本在安装、启动时都会强制生成。
+- 端口默认随机高位，只是降低被扫描的概率，**不构成安全边界**——真正的防线是足够长的随机令牌。
+- 令牌通过 URL query 传递（legado_NG 的调用方式），会被中间的代理/日志记录，公网环境下请配合 HTTPS 或仅自己使用。
+- **从旧版本升级**：装过的机器不会自动获得修复，请重跑一次安装脚本（会沿用原令牌与原端口）：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main/install.sh) update
+```
 
 ## 手动部署（GitHub 预编译二进制）
 
@@ -101,9 +118,9 @@ cargo build --release && ./target/release/tts-server-rust
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `TTS_TOKEN` | 空（关闭鉴权） | 访问令牌，与 legado_NG 引擎「访问令牌」一致；支持 `?token=` 与 `Authorization: Bearer` |
+| `TTS_TOKEN` | 空（关闭鉴权） | 访问令牌，与 legado_NG 引擎「访问令牌」一致；支持 `?token=` 与 `Authorization: Bearer`。**为空即完全不鉴权，安装脚本会强制生成** |
 | `HOST` | `0.0.0.0` | 绑定地址 |
-| `PORT` | `8080` | 监听端口 |
+| `PORT` | `8080` | 监听端口（二进制自身兜底值；**安装脚本会注入 30000-59999 的随机高位端口**） |
 | `DEFAULT_VOICE` | `zh-CN-XiaoxiaoNeural` | 未指定 voice 时的默认音色 |
 | `FIRST_BYTE_TIMEOUT_MS` | `10000` | 单次尝试获取首字节音频的超时 |
 | `TOTAL_TIMEOUT_MS` | `60000` | 包含重试在内的总超时预算 |
