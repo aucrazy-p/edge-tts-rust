@@ -1,32 +1,22 @@
-# tts-server-rust（仓库：aucrazy-p/edge-tts-rust）
+# tts-server-rust
 
-轻量自托管 Edge TTS 服务（Rust 版），专为 [legado_NG](https://github.com/gedoor/legado)（阅读 3.0）的「自托管 Edge TTS」引擎设计。
+自托管 Edge TTS 服务（Rust 版），给 [legado_NG](https://github.com/gedoor/legado)（阅读 3.0）的「自托管 Edge TTS」引擎用。
 
-- **Rust + axum + edge-tts-rust**：空闲内存仅约 10–30 MB，可在 128 MB 小鸡上运行。
-- **39 音色下拉不变**：1:1 对齐 legado_NG 内置引擎的 GET 契约，阅读里现有引擎配置**一行都不用改**。
-- **流式首字节低延迟**：Edge 每合成一段音频立即推流（长章节不必等整段合成完）。
-- **指数退避重试 + 可配置超时**：晚高峰跨境丢包时自动重试，不再一次失败就 502。
-- **LRU 缓存**：相同音色+文本秒回，省流量。
+- 空闲内存约 10–30 MB，128 MB 小鸡够用
+- `/voices` 动态同步微软实时音色列表，阅读里能直接选
+- 边合成边推流，首字节快
+- 首字节超时自动重试（指数退避）
+- LRU 缓存，同音色同文本秒回
 
-## 为什么不直接用 Python 版 / enximi
+## 安装
 
-| 方案 | 内存 | 39 音色下拉 | 流式 | 重试/超时 |
-|------|------|------------|------|-----------|
-| Python server.py | 高（venv+Flask） | ✅ | ✅ | ❌ |
-| enximi（通用 HTTP TTS 导入） | 极低 | ❌（每导入仅 1 个写死音色） | ❌（整段缓冲） | ✅ |
-| **tts-server-rust（本仓库）** | **极低** | **✅** | **✅** | **✅** |
-
-> 本仓库集合了前两者优点：Rust 的轻量 + Python 版的 39 音色/流式 + enximi 的重试/超时。
-
-## 安装 / 管理（含交互菜单）
-
-在服务器上执行（自动检测架构，从 GitHub Releases 下载预编译二进制）：
+服务器上执行：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main/install.sh)
 ```
 
-交互运行会弹出管理菜单（与上回 tts-server 菜单一致）：
+会自动识别架构，从 GitHub Releases 下载预编译二进制并注册 systemd 服务。交互运行会出菜单：
 
 ```
 ====== tts-server-rust 管理菜单 ======
@@ -44,91 +34,67 @@ bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main
 请选择 [0-9]:
 ```
 
-- **首次安装**会依次询问：访问令牌（留空随机生成，**不允许为空**）、监听端口（**留空=随机 30000-59999 高位端口**，避开 8080 这类被全网扫描的端口；若小鸡只放开 80/443 就填对应端口）、反向代理域名（留空=不反代，直接用 `IP:端口+token`）。
-- **更新（菜单 7）** 会沿用已有配置重新拉取最新二进制，不再重复询问。
-- 菜单 8「更改端口」可随时改监听端口并自动重启生效（若启用反代会同步 Caddy 端口）。
-- 菜单 9「对外访问配置」用 Caddy 反代 + 自动申请 HTTPS（个人使用也可不选，直接 IP:端口+token）。Caddy 通过官方 apt 仓库安装。
+首次安装只问三件事：
 
-也可直接传子命令（无需菜单）：
+1. **访问令牌** —— 留空则随机生成，不允许为空
+2. **监听端口** —— 留空 = 随机 30000–59999 高位端口；小鸡只放行 80/443 就填对应端口
+3. **反代域名** —— 留空 = 不反代，直接用 `IP:端口?token=`
 
-```bash
-bash install.sh install        # 安装
-bash install.sh uninstall      # 卸载
-bash install.sh start          # 启动服务
-bash install.sh stop           # 停止服务
-bash install.sh status         # 查看状态（含服务地址）
-bash install.sh logs           # 查看日志
-bash install.sh update         # 更新
-bash install.sh change-port    # 更改端口
-bash install.sh setup-caddy    # 对外访问配置
-bash install.sh menu           # 直接进入菜单
-```
+菜单 7 更新会沿用已有配置，不再重复询问；菜单 8 改端口并自动重启生效；菜单 9 用 Caddy 反代并自动申请 HTTPS（个人自用可以不选）。
 
-非交互（一键）示例：
+## 一键非交互安装
 
 ```bash
-# 全自动：令牌随机生成，端口随机高位
-TTS_TOKEN=你的令牌 bash install.sh
+# 全自动：随机令牌 + 随机高位端口
+bash install.sh
 
-# 指定端口（此时不再随机）
+# 指定端口
 PORT=38641 TTS_TOKEN=你的令牌 bash install.sh
 
-# 需要 HTTPS 再加域名
+# 需要 HTTPS 再给域名
 PORT=38641 TTS_TOKEN=你的令牌 DOMAIN=tts.example.com bash install.sh
 ```
 
-> 注：交互读取统一走 `/dev/tty`，因此 `curl | bash` 场景下菜单也能正常输入，不会像旧版那样直接跳过。
-
-## 安全与升级
-
-- 配置文件 `/etc/tts-server-rust.conf` 权限为 `600`，内含明文令牌。
-- **令牌不会被允许为空**：服务端在 `TTS_TOKEN` 为空时会完全跳过鉴权，因此脚本在安装、启动时都会强制生成。
-- 端口默认随机高位，只是降低被扫描的概率，**不构成安全边界**——真正的防线是足够长的随机令牌。
-- 令牌通过 URL query 传递（legado_NG 的调用方式），会被中间的代理/日志记录，公网环境下请配合 HTTPS 或仅自己使用。
-- **从旧版本升级**：装过的机器不会自动获得修复，请重跑一次安装脚本（会沿用原令牌与原端口）：
+## 子命令
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main/install.sh) update
+bash install.sh install        # 安装
+bash install.sh update         # 更新
+bash install.sh uninstall      # 卸载
+bash install.sh start          # 启动
+bash install.sh stop           # 停止
+bash install.sh status         # 状态（含服务地址）
+bash install.sh logs           # 日志
+bash install.sh change-port    # 改端口
+bash install.sh setup-caddy    # 对外访问配置
+bash install.sh menu           # 进菜单
 ```
 
-## 手动部署（GitHub 预编译二进制）
+## 阅读里怎么填
 
-1. 到 [Releases](https://github.com/aucrazy-p/edge-tts-rust/releases) 下载对应架构：
-   - `tts-server-rust-linux-x86_64`
-   - `tts-server-rust-linux-aarch64`
-   - `tts-server-rust-windows-x86_64.exe`
-2. 上传到服务器，`chmod +x` 后运行：
-   ```bash
-   export TTS_TOKEN="你的长随机令牌"
-   ./tts-server-rust
-   ```
-   > 二进制本身不带参数解析，配置全部走环境变量（见下）。监听端口用 `PORT` 环境变量。
-3. **不使用反代**（个人使用最简单）：直接开放防火墙端口，legado_NG 服务地址填 `http://服务器IP:端口?token=令牌` 即可。
-4. 若要用 HTTPS/域名，再用 Caddy/Nginx 反代到 443（Cloudflare 建议走**灰云直连**以降低延迟）。
+引擎类型选「自托管 Edge TTS」，服务地址填：
 
-## 从源码构建 / 本地运行
-
-```bash
-cargo run --release
-# 或
-cargo build --release && ./target/release/tts-server-rust
+```
+http://服务器IP:端口?token=你的令牌
 ```
 
 ## 环境变量
 
+二进制本身不带参数解析，配置全部走环境变量。
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `TTS_TOKEN` | 空（关闭鉴权） | 访问令牌，与 legado_NG 引擎「访问令牌」一致；支持 `?token=` 与 `Authorization: Bearer`。**为空即完全不鉴权，安装脚本会强制生成** |
+| `TTS_TOKEN` | 空（关闭鉴权） | 访问令牌，支持 `?token=` 与 `Authorization: Bearer`。为空即完全不鉴权，安装脚本会强制生成 |
 | `HOST` | `0.0.0.0` | 绑定地址 |
-| `PORT` | `8080` | 监听端口（二进制自身兜底值；**安装脚本会注入 30000-59999 的随机高位端口**） |
+| `PORT` | `8080` | 监听端口（安装脚本会注入 30000–59999 的随机高位端口） |
 | `DEFAULT_VOICE` | `zh-CN-XiaoxiaoNeural` | 未指定 voice 时的默认音色 |
-| `FIRST_BYTE_TIMEOUT_MS` | `10000` | 单次尝试获取首字节音频的超时 |
-| `TOTAL_TIMEOUT_MS` | `60000` | 包含重试在内的总超时预算 |
-| `RETRY_MAX_ATTEMPTS` | `3` | 首字节失败的重试次数（指数退避） |
-| `RETRY_BACKOFF_MS` | `1000` | 首次重试的基础退避（每次翻倍） |
+| `FIRST_BYTE_TIMEOUT_MS` | `10000` | 单次尝试拿首字节音频的超时 |
+| `TOTAL_TIMEOUT_MS` | `60000` | 含重试的总超时预算 |
+| `RETRY_MAX_ATTEMPTS` | `3` | 首字节失败的重试次数 |
+| `RETRY_BACKOFF_MS` | `1000` | 首次重试基础退避，每次翻倍 |
 | `CACHE_MAX_ITEMS` | `600` | LRU 缓存条目上限 |
 
-晚高峰卡顿调优示例：
+晚高峰卡顿可调大超时：
 
 ```bash
 export TTS_TOKEN="xxxx"
@@ -138,18 +104,44 @@ export RETRY_MAX_ATTEMPTS=4
 ./tts-server-rust
 ```
 
-## 接口契约（与 Python 版完全一致）
+## 接口
 
 ```
-GET /                             状态页（HTML）
-GET /voices?token=...             {"voices":[...39...]}   legado_NG 拉音色列表
+GET /                                   状态页（HTML）
+GET /voices?token=...                   {"voices":[...]}  阅读拉音色列表
 GET /tts?text=&voice=&speed=&pitch=&volume=&style=&token=   audio/mpeg（流式）
 ```
 
-`style` 参数会被接收但忽略（edge-tts 7.x 起不再支持自定义 SSML 风格注入），与 Python 版行为一致。
+`style` 参数会被接收但忽略（edge-tts 7.x 起不支持自定义 SSML 风格注入）。
 
-## 部署到 128 MB 香港小鸡的建议
+## 手动部署
 
-- 直接跑静态二进制，**不要套 Docker**（dockerd 自身就吃 30–50 MB）。
-- 走 Cloudflare 灰云（DNS-only）直连 HK IP，沈阳→香港延迟远低于跨太平洋到美国。
-- 不反代、直接用 IP:端口+token 对个人使用完全够用，省去 HTTPS/域名配置。
+1. 到 [Releases](https://github.com/aucrazy-p/edge-tts-rust/releases) 下载对应架构：
+   `tts-server-rust-linux-x86_64` / `tts-server-rust-linux-aarch64` / `tts-server-rust-windows-x86_64.exe`
+2. `chmod +x` 后直接跑：
+
+   ```bash
+   export TTS_TOKEN="你的长随机令牌"
+   export PORT=38641
+   ./tts-server-rust
+   ```
+
+3. 不用反代就开放防火墙端口，阅读里填 `http://IP:端口?token=令牌`。要 HTTPS 再用 Caddy/Nginx 反代（Cloudflare 建议灰云直连，延迟更低）。
+
+从源码构建：
+
+```bash
+cargo run --release
+```
+
+## 安全
+
+- 配置文件 `/etc/tts-server-rust.conf` 权限 `600`，内含明文令牌。
+- `TTS_TOKEN` 为空时服务端完全跳过鉴权，所以安装、启动时都会强制生成。
+- 端口默认随机高位只是降低被扫描概率，**不是安全边界**——真正的防线是足够长的随机令牌。
+- 令牌通过 URL query 传递（阅读的调用方式），会被沿途代理/日志记录，公网环境请配 HTTPS 或仅自己使用。
+- 升级到修复版需重跑安装脚本（沿用原令牌与原端口）：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main/install.sh) update
+```
