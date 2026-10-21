@@ -20,11 +20,16 @@ set -euo pipefail
 
 REPO="aucrazy-p/edge-tts-rust"
 BIN="tts-server-rust"
+UNIT_FILE="$UNIT_FILE"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 CONFIG_FILE="/etc/$BIN.conf"
 # 默认端口不再用 8080：那是全网扫描器的主要靶场，改为随机高位端口
 PORT_RANGE_MIN=30000
 PORT_RANGE_MAX=59999
+
+# 更新流程状态位：用于更新失败时把被停掉的服务恢复回去
+SERVICE_WAS_RUNNING=0
+SERVICE_RESTARTED=0
 
 # ---------- 通用工具 ----------
 if [ -e /dev/tty ]; then
@@ -59,6 +64,54 @@ port_in_use(){
     lsof -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1
   else
     (exec 3<>/dev/tcp/127.0.0.1/"$p") >/dev/null 2>&1
+  fi
+}
+
+# 本服务当前是否在运行（systemd 有 unit 就问 systemd，否则按进程路径探测）
+service_active(){
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then
+    systemctl is-active --quiet "$BIN.service" 2>/dev/null
+  else
+    pgrep -f "$INSTALL_DIR/$BIN" >/dev/null 2>&1
+  fi
+}
+
+# 静默停止本服务。返回 0 表示「确实停掉了一个正在运行的实例」。
+# 先 systemctl stop，再用 pkill 兜底：systemd 停完仍可能有手工 nohup 起的残留。
+stop_existing_service(){
+  local was=1
+  if service_active; then was=0; fi
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then
+    systemctl stop "$BIN.service" >/dev/null 2>&1 || true
+  fi
+  pkill -f "$INSTALL_DIR/$BIN" >/dev/null 2>&1 || true
+  return $was
+}
+
+# 等端口真正释放。systemctl stop 是异步的，紧接着查端口会误判「仍被占用」，
+# 从而把更新流程带到「换个端口」这条错路上。
+wait_port_free(){
+  local p="${1:-}" tries="${2:-20}" i=0
+  [ -n "$p" ] || return 0
+  while [ "$i" -lt "$tries" ]; do
+    port_in_use "$p" || return 0
+    sleep 0.25
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# 更新中途失败（下载断、校验不过、端口冲突退出）时把停掉的服务拉回来，
+# 避免「更新失败 = 服务彻底停摆」。
+restart_if_left_stopped(){
+  [ "${SERVICE_WAS_RUNNING:-0}" = "1" ] || return 0
+  [ "${SERVICE_RESTARTED:-0}" = "1" ] && return 0
+  warn "安装未完成，正在恢复原有服务"
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then
+    systemctl start "$BIN.service" >/dev/null 2>&1 || true
+  elif [ -x "$INSTALL_DIR/$BIN" ]; then
+    nohup env TTS_TOKEN="${TTS_TOKEN:-}" PORT="${PORT:-}" \
+      "$INSTALL_DIR/$BIN" >"/var/log/$BIN.log" 2>&1 &
   fi
 }
 
@@ -267,12 +320,29 @@ install_binary(){
 
 do_install(){
   detect_arch
+  # 复位更新状态位：菜单里可能连续执行多次，避免上一轮的值带进来
+  SERVICE_WAS_RUNNING=0
+  SERVICE_RESTARTED=0
   local port_env="${PORT:-}"
   local token_env="${TTS_TOKEN:-}"
   # 变量名属历史遗留：fresh=0 表示"尚未安装过"（无配置文件）
   local fresh=1; [ -f "$CONFIG_FILE" ] || fresh=0
   load_config
   local force="${FORCE_PROMPT:-0}"
+
+  # 更新场景：先把跑着的旧服务停掉，再往下走。不停会有两个后果：
+  #   ① 它正监听 $PORT，port_in_use 会把它当成「端口被占用」→ 脚本偷偷换端口，
+  #      用户的 legado 地址、Caddy 反代、防火墙规则全部对不上；
+  #   ② 二进制是 mv 原地替换的，运行中的进程持有旧 inode，不重启就一直跑旧版本。
+  if [ "$fresh" = "1" ]; then
+    if stop_existing_service; then
+      SERVICE_WAS_RUNNING=1
+      info "已停止运行中的旧服务，准备更新"
+      # 后续任何一步失败都要把服务恢复起来，不能把用户晾在停摆状态
+      trap restart_if_left_stopped EXIT
+    fi
+    wait_port_free "$PORT" 20 || warn "端口 $PORT 释放较慢，继续尝试"
+  fi
 
   # 令牌：仅首次安装（无旧配置）或强制时询问；更新时沿用已有令牌
   if { [ "$fresh" = "0" ] && [ -z "$token_env" ] && [ -z "$TTS_TOKEN" ]; } || [ "$force" = "1" ]; then
@@ -300,6 +370,13 @@ do_install(){
     err "端口非法：$PORT（必须是 1-65535 的数字）"; exit 1
   fi
   if port_in_use "$PORT"; then
+    if [ "$fresh" = "1" ]; then
+      # 更新时绝不能悄悄换端口：换完用户的访问地址和反代就全对不上了，
+      # 而且换端口后新实例起来、旧实例可能还占着老端口，两个进程并存更难查。
+      err "端口 $PORT 仍被其它进程占用（本服务已尝试停止）"
+      err "请先释放该端口，或执行：bash install.sh change-port 改到别的端口"
+      exit 1
+    fi
     local alt; alt="$(gen_port)"
     while port_in_use "$alt"; do alt="$(gen_port)"; done
     warn "端口 $PORT 已被占用，改用空闲端口 $alt"
@@ -323,7 +400,7 @@ do_install(){
 
   # systemd 服务
   if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ]; then
-    cat > "/etc/systemd/system/$BIN.service" <<EOF
+    cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=tts-server-rust (Edge TTS for legado_NG)
 After=network.target
@@ -339,10 +416,20 @@ User=root
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable --now "$BIN.service"
-    info "已启动 systemd 服务 $BIN.service"
-  elif [ -z "${DOMAIN:-}" ]; then
-    warn "未检测到 systemd，请手动后台运行: TTS_TOKEN=$TTS_TOKEN PORT=$PORT $INSTALL_DIR/$BIN"
+    systemctl enable "$BIN.service" >/dev/null 2>&1 || true
+    # 必须用 restart 而不是 enable --now：二进制是原子替换的文件，
+    # 已被停掉的也好、仍在跑的也好，restart 都会让进程重新 exec 加载新版本；
+    # 而 enable --now 对已 active 的服务是空操作，等于「更新了但还在跑旧的」。
+    systemctl restart "$BIN.service"
+    SERVICE_RESTARTED=1
+    info "已重启 systemd 服务 $BIN.service"
+  else
+    # 无 systemd：上面已经把旧进程停了，这里必须自己拉起来，
+    # 否则「更新」的结果是把服务弄死。
+    nohup env TTS_TOKEN="$TTS_TOKEN" PORT="$PORT" \
+      "$INSTALL_DIR/$BIN" >"/var/log/$BIN.log" 2>&1 &
+    SERVICE_RESTARTED=1
+    info "已后台启动 (PID $!)"
   fi
 
   # 反向代理（可选项）
@@ -361,7 +448,7 @@ do_uninstall(){
   detect_arch
   if command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now "$BIN.service" 2>/dev/null || true
-    rm -f "/etc/systemd/system/$BIN.service"
+    rm -f "$UNIT_FILE"
     systemctl daemon-reload 2>/dev/null || true
   fi
   pkill -f "$INSTALL_DIR/$BIN" 2>/dev/null || true
@@ -377,10 +464,10 @@ ensure_token(){
     persist_config
     warn "原配置中令牌为空（服务等于裸奔），已生成新令牌"
   fi
-  if command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/$BIN.service" ]; then
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then
     # 兼容带引号与旧式不带引号两种 unit 写法
     sed -i "s|^Environment=\"\?TTS_TOKEN=.*|Environment=\"TTS_TOKEN=$TTS_TOKEN\"|" \
-      "/etc/systemd/system/$BIN.service" 2>/dev/null || true
+      "$UNIT_FILE" 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
   fi
 }
@@ -413,7 +500,7 @@ do_status(){
 }
 
 do_logs(){
-  if command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/$BIN.service" ]; then
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then
     journalctl -u "$BIN.service" -n 100 --no-pager
   elif [ -f "/var/log/$BIN.log" ]; then
     tail -n 100 "/var/log/$BIN.log"
@@ -464,8 +551,8 @@ do_change_port(){
     caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true
     info "已同步 Caddy 反代端口"
   fi
-  if command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/$BIN.service" ]; then
-    sed -i "s/^Environment=PORT=.*/Environment=PORT=$PORT/" "/etc/systemd/system/$BIN.service"
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$UNIT_FILE" ]; then
+    sed -i "s/^Environment=PORT=.*/Environment=PORT=$PORT/" "$UNIT_FILE"
     systemctl daemon-reload
     systemctl restart "$BIN.service" && info "已重启服务（新端口 $PORT）"
   else

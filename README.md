@@ -44,6 +44,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/aucrazy-p/edge-tts-rust/main
 
 菜单 7 更新会沿用已有配置，不再重复询问；菜单 8 改端口并自动重启生效；菜单 9 用 Caddy 反代并自动申请 HTTPS（个人自用可以不选）。
 
+更新（菜单 7 / `update`）会先停止正在运行的旧服务再替换二进制，装完显式 `systemctl restart`，因此端口、令牌、反代配置都保持原样，不需要重新填写。这一步是必须的：Linux 上二进制被原地替换后，运行中的进程仍持有旧 inode，不重启就一直跑旧版本。若中途失败（下载断、校验不过、端口被别的进程占用），脚本会把你原来那个服务重新拉起来，不会留下停摆状态。
+
 ## 一键非交互安装
 
 ```bash
@@ -182,6 +184,27 @@ Edge 的通信协议、`Sec-MS-GEC` 签名和 WebM 封装由第三方库
 ```bash
 cargo run --release
 ```
+
+## 排障
+
+**更新后地址变了 / 端口被换掉了**（旧版安装脚本的问题，`update` 已修复）
+
+旧版更新时不先停服务，`port_in_use` 把"自己"当成占用者，于是随机换了个端口并写进配置。恢复方法：
+
+```bash
+cat /etc/tts-server-rust.conf          # 看当前 PORT 是多少
+bash install.sh stop
+pkill -f tts-server-rust               # 干掉可能残留的旧进程
+ss -lntp | grep tts-server-rust        # 确认为空
+bash install.sh change-port            # 改回原来的端口（配了反代时自动同步 Caddy）
+bash install.sh update                 # 用新版脚本重装
+```
+
+**更新后仍在跑旧版本**（同样已修复）：二进制被原地替换，但旧进程持有旧 inode。手动兜底就是一句 `systemctl restart tts-server-rust`。
+
+**合成全部 403**：微软改了 `Sec-MS-GEC` 签名算法，依赖库没跟上。查 crates.io 有无新版；有就等自动同步工作流升级发版，没有才需要自己 fork 那个 crate 打补丁。
+
+**`/voices` 只剩几条或显示拼音名**：拉的是旧二进制，`bash install.sh update` 一下即可。
 
 ## 安全
 
