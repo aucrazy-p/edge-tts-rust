@@ -13,6 +13,7 @@
 //!   GET /voices?token=...        -> {"voices":[...]}（动态同步微软实时列表，缓存 24h）
 //!   GET /tts?text=&voice=&speed=&pitch=&volume=&style=&token= -> audio/mpeg（整段缓冲，带 Content-Length）
 
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,6 +51,9 @@ fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
 
 // ----------------------------- 应用状态 -----------------------------
 
+/// 内置目录索引：id -> (中文名, 音色定位, 内置顺序)
+type BuiltinIndex = HashMap<String, (String, String, usize)>;
+
 struct AppState {
     client: EdgeTtsClient,
     token: String,
@@ -61,6 +65,10 @@ struct AppState {
     retry_backoff: Duration,
     voices_json: &'static str,
     voice_count: usize,
+    /// 音色范围：mandarin（默认，只留普通话）/ all-zh（含方言与港澳台）
+    voice_scope: String,
+    /// 内置目录索引，用来给实时音色补中文名与音色定位
+    builtin_index: Arc<BuiltinIndex>,
     /// 动态音色列表缓存：(时间戳, JSON 字符串, 数量, 是否静态回退)
     voices_cache: Arc<Mutex<Option<(Instant, String, usize, bool)>>>,
 }
@@ -78,6 +86,8 @@ impl Clone for AppState {
             retry_backoff: self.retry_backoff,
             voices_json: self.voices_json,
             voice_count: self.voice_count,
+            voice_scope: self.voice_scope.clone(),
+            builtin_index: self.builtin_index.clone(),
             voices_cache: self.voices_cache.clone(),
         }
     }
@@ -249,25 +259,121 @@ fn derive_voice_profile(short: &str) -> String {
     }
 }
 
-/// 实时向微软拉取中文音色列表，构造 legado_NG 需要的 voices 结构。
-/// 用与合成完全相同的 client/token，保证“列出来的”一定能合成。
-async fn build_voices_json(client: &EdgeTtsClient) -> Option<(String, usize)> {
-    let voices = client.list_voices().await.ok()?;
-    let mut out = Vec::new();
-    for v in voices {
-        if !v.locale.starts_with("zh") {
+/// 音色范围判定（只看 locale）：
+/// - `mandarin`（默认）：只保留精确 `zh-CN`，方言（zh-CN-liaoning / zh-CN-shaanxi）
+///   与港澳台（zh-HK / zh-TW）全部排除
+/// - `all-zh`：保留所有中文，含方言与港澳台
+fn locale_in_scope(locale: &str, scope: &str) -> bool {
+    if scope == "all-zh" {
+        return locale.starts_with("zh")
+            || locale.starts_with("wuu")
+            || locale.starts_with("yue");
+    }
+    locale == "zh-CN"
+}
+
+/// 综合判定：除 locale 外还要看短名。
+/// 有个坑：`zh-CN-XiaoxiaoDialectsNeural` 的 locale 也是 `zh-CN`，
+/// 只看 locale 会漏网，普通话范围下必须按 id 关键词再剔一次。
+fn voice_in_scope(locale: &str, short_name: &str, scope: &str) -> bool {
+    if !locale_in_scope(locale, scope) {
+        return false;
+    }
+    if scope == "all-zh" {
+        return true;
+    }
+    !short_name.to_ascii_lowercase().contains("dialect")
+}
+
+/// 从内置目录建立 id -> (中文名, 音色定位, 内置顺序) 的索引。
+fn build_builtin_index(voices_json: &str) -> BuiltinIndex {
+    let mut map = BuiltinIndex::new();
+    let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(voices_json) else {
+        return map;
+    };
+    for (i, v) in arr.iter().enumerate() {
+        let id = v.get("id").and_then(|x| x.as_str()).unwrap_or_default();
+        if id.is_empty() {
             continue;
         }
-        let mut obj = serde_json::Map::new();
-        obj.insert("id".into(), json!(v.short_name));
-        obj.insert("name".into(), json!(derive_voice_name(&v.short_name)));
-        obj.insert("gender".into(), json!(v.gender));
-        obj.insert("profile".into(), json!(derive_voice_profile(&v.short_name)));
-        out.push(json!(obj));
+        let name = v.get("name").and_then(|x| x.as_str()).unwrap_or_default();
+        let profile = v.get("profile").and_then(|x| x.as_str()).unwrap_or_default();
+        map.insert(id.to_string(), (name.to_string(), profile.to_string(), i));
     }
-    if out.is_empty() {
+    map
+}
+
+/// 从短名反推 locale：`zh-CN-XiaoxiaoNeural` -> `zh-CN`。
+fn locale_from_id(id: &str) -> String {
+    let parts: Vec<&str> = id.split('-').collect();
+    if parts.len() >= 2 {
+        format!("{}-{}", parts[0], parts[1])
+    } else {
+        id.to_string()
+    }
+}
+
+/// 短名里是否带第三级地区标签，如 `zh-CN-liaoning-XiaobeiNeural`（4 段）。
+/// 这类就是方言发音人，普通话范围内要剔除。
+fn id_has_region_subtag(id: &str) -> bool {
+    id.split('-').count() >= 4
+}
+
+/// 按范围过滤内置目录，供实时拉取失败时兜底，保证兜底列表同样符合范围设定。
+fn filtered_builtin_json(voices_json: &str, scope: &str) -> (String, usize) {
+    let arr: Vec<serde_json::Value> = serde_json::from_str(voices_json).unwrap_or_default();
+    let kept: Vec<serde_json::Value> = arr
+        .into_iter()
+        .filter(|v| {
+            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or_default();
+            if !voice_in_scope(&locale_from_id(id), id, scope) {
+                return false;
+            }
+            scope == "all-zh" || !id_has_region_subtag(id)
+        })
+        .collect();
+    let n = kept.len();
+    (json!({ "voices": kept }).to_string(), n)
+}
+
+/// 实时向微软拉取音色列表，按范围过滤后构造 legado_NG 需要的 voices 结构。
+/// 用与合成完全相同的 client/token，保证“列出来的”一定能合成。
+async fn build_voices_json(
+    client: &EdgeTtsClient,
+    scope: &str,
+    builtin: &BuiltinIndex,
+) -> Option<(String, usize)> {
+    let voices = client.list_voices().await.ok()?;
+    let mut picked: Vec<(usize, serde_json::Value)> = Vec::new();
+    for v in voices {
+        if !voice_in_scope(&v.locale, &v.short_name, scope) {
+            continue;
+        }
+        let short = v.short_name.clone();
+        // 优先用内置目录里的中文名和音色定位，避免 legado 里显示 "Xiaoxiao" 这种拼音
+        let hit = builtin.get(&short);
+        let name = hit
+            .map(|(n, _, _)| n.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| derive_voice_name(&short));
+        let profile = hit
+            .map(|(_, p, _)| p.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| derive_voice_profile(&short));
+        // 按内置目录顺序排：晓晓在最前（与默认音色一致），童声自然靠后
+        let order = hit.map(|(_, _, i)| *i).unwrap_or(usize::MAX);
+        let mut obj = serde_json::Map::new();
+        obj.insert("id".into(), json!(short));
+        obj.insert("name".into(), json!(name));
+        obj.insert("gender".into(), json!(v.gender));
+        obj.insert("profile".into(), json!(profile));
+        picked.push((order, json!(obj)));
+    }
+    if picked.is_empty() {
         return None;
     }
+    picked.sort_by_key(|(order, _)| *order);
+    let out: Vec<serde_json::Value> = picked.into_iter().map(|(_, v)| v).collect();
     let n = out.len();
     let payload = json!({ "voices": out });
     Some((payload.to_string(), n))
@@ -285,13 +391,13 @@ async fn get_voices(state: &AppState) -> String {
             }
         }
     }
-    match build_voices_json(&state.client).await {
+    match build_voices_json(&state.client, &state.voice_scope, &state.builtin_index).await {
         Some((s, n)) => {
             let _ = state.voices_cache.lock().await.insert((Instant::now(), s.clone(), n, false));
             s
         }
         None => {
-            let s = format!(r#"{{"voices":{}}}"#, state.voices_json);
+            let (s, n) = filtered_builtin_json(state.voices_json, &state.voice_scope);
             // 回退静态：把时间戳设为“已过期”，使下次请求尽快重试实时拉取
             let past = Instant::now()
                 .checked_sub(VOICES_FALLBACK_TTL)
@@ -300,8 +406,8 @@ async fn get_voices(state: &AppState) -> String {
                 .voices_cache
                 .lock()
                 .await
-                .insert((past, s.clone(), state.voice_count, true));
-            info!("voices: 实时拉取失败，回退内置静态列表");
+                .insert((past, s.clone(), n, true));
+            info!("voices: 实时拉取失败，回退内置静态列表（{n} 条）");
             s
         }
     }
@@ -504,11 +610,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 39 音色目录：直接复用 server.py 的数据，编译期嵌入
     let voices_json: &'static str = include_str!("../voices.json");
-    let voice_count = serde_json::from_str::<serde_json::Value>(voices_json)
-        .ok()
-        .and_then(|v| v.as_array().map(|a| a.len()))
-        .unwrap_or(0);
-    info!("loaded {voice_count} voices");
+    // madarin（默认）只留普通话；all-zh 含方言与港澳台
+    let voice_scope = env_or("VOICE_SCOPE", "mandarin".to_string());
+    let builtin_index = Arc::new(build_builtin_index(voices_json));
+    let (_, voice_count) = filtered_builtin_json(voices_json, &voice_scope);
+    info!("loaded {voice_count} voices (scope={voice_scope})");
 
     let cache_size = env_or("CACHE_MAX_ITEMS", 600usize);
     let cache = Arc::new(Mutex::new(LruCache::new(
@@ -528,6 +634,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         retry_backoff: Duration::from_millis(env_or("RETRY_BACKOFF_MS", 1_000u64)),
         voices_json,
         voice_count,
+        voice_scope,
+        builtin_index,
         voices_cache: Arc::new(Mutex::new(None)),
     };
 
