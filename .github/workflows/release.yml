@@ -1,9 +1,29 @@
 name: Build & Release
 
+# 三种触发方式：
+#   1. push v* tag      → 三平台构建 + 发布 Release（手动发版走这条）
+#   2. workflow_dispatch → 只构建，不发布（验证能否编译）
+#   3. workflow_call     → 供 upstream-sync.yml 复用（构建 + 发布）
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      publish:
+        description: "是否发布 Release"
+        type: boolean
+        default: true
+      tag_name:
+        description: "Release 使用的 tag，留空则用触发 ref"
+        type: string
+        required: false
+        default: ""
+      ref:
+        description: "构建哪个 commit，留空则用触发 sha"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -21,6 +41,9 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc, suffix: windows-x86_64.exe }
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 被 upstream-sync 调用时构建刚 push 的那个 commit，否则用触发 sha
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -56,7 +79,9 @@ jobs:
   release:
     name: publish release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    # 打 tag 触发、或被 upstream-sync 显式要求发布时才出 Release；
+    # 手动 dispatch 只做编译验证，不会误发版本。
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -74,5 +99,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+          # 被 workflow_call 调用时 github.ref 还停在分支上，必须显式指定 tag
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
+          # 同理，锚定到实际构建的那个 commit
+          target_commitish: ${{ inputs.ref || github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

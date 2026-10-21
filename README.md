@@ -142,6 +142,27 @@ GET /tts?text=&voice=&speed=&pitch=&volume=&style=&token=   audio/mpeg（流式�
 
 `style` 参数会被接收但忽略（edge-tts 7.x 起不支持自定义 SSML 风格注入）。
 
+## 依赖与版本升级
+
+Edge 的通信协议、`Sec-MS-GEC` 签名和 WebM 封装由第三方库
+[`edge-tts-rust`](https://crates.io/crates/edge-tts-rust)（上游 [Initsnow/edge-tts-rust](https://github.com/Initsnow/edge-tts-rust)）负责，
+本项目在 `Cargo.toml` 里按精确版本锁定，保证构建产物可复现。
+
+微软偶尔会调整签名算法，上游通常几天内跟进。为免手动盯版本，
+`.github/workflows/upstream-sync.yml` 每天 09:17（北京时间）自动检查一次 crates.io：
+
+1. 发现新版本 → 改写 `Cargo.toml` 并 `cargo update`，刷新 `Cargo.lock`
+2. 先跑 `cargo build --release` 编译验证，**通过才提交**（避免把编不过的代码推上 main）
+3. 提交后打新 tag（项目版本号在当前最大 `v*` tag 的 patch 位 +1，与依赖版本是两套编号）
+4. 复用 `release.yml` 完成三平台构建并发布 Release
+
+之后在服务器上执行 `bash install.sh update` 即可换上。
+
+也可在 Actions 页面手动运行 **Sync Upstream Dependency**：`target_version` 留空表示自动检测，
+填具体版本号则强制升到该版本（会跳过版本高低校验，便于验证整条链路）。
+
+手动发版方式不变：打一个 `v*` tag 即可，`release.yml` 两种触发方式都支持。
+
 ## 手动部署
 
 1. 到 [Releases](https://github.com/aucrazy-p/edge-tts-rust/releases) 下载对应架构：
