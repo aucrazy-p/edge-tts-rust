@@ -20,7 +20,7 @@ set -euo pipefail
 
 REPO="aucrazy-p/edge-tts-rust"
 BIN="tts-server-rust"
-UNIT_FILE="$UNIT_FILE"
+UNIT_FILE="/etc/systemd/system/$BIN.service"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 CONFIG_FILE="/etc/$BIN.conf"
 # 默认端口不再用 8080：那是全网扫描器的主要靶场，改为随机高位端口
