@@ -441,9 +441,9 @@ dependencies = [
 
 [[package]]
 name = "edge-tts-rust"
-version = "0.1.7"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "037d1d97a6c90259ee92522885d2f6907c8881522da7bb0cbc1b2c93213717f2"
+checksum = "1a8abfd606f068747e270e567d60e0788b69e1e35d5d3c33c06e71f93ca100a6"
 dependencies = [
  "async-stream",
  "bytes",
